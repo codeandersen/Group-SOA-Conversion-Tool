@@ -78,9 +78,15 @@ The tool automatically triggers the consent flow when you click **"Connect to Gr
 
 1. **Run the Script**:
    ```powershell
+   .\Group-SOA-Conversion-Tool.ps1
+   ```
+   
+   Or, to connect to a specific tenant:
+   ```powershell
    .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
    ```
-   The `-TenantId` parameter is **required** to ensure you always connect to the correct tenant. The tenant ID is displayed in the title bar once connected.
+   
+   The `-TenantId` parameter is **optional**. If not specified, you'll connect to your default tenant. The tenant ID is displayed in the title bar once connected.
 
 2. **Connect to Microsoft Graph**:
    - Click **"Connect to Graph"** button
@@ -244,6 +250,28 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 - [Get onPremisesSyncBehavior API](https://learn.microsoft.com/en-us/graph/api/onpremisessyncbehavior-get)
 - [Update onPremisesSyncBehavior API](https://learn.microsoft.com/en-us/graph/api/onpremisessyncbehavior-update)
 
+## Changelog
+
+### Version 1.01 (2026-03-04)
+**New Features:**
+- **Column Sorting**: Click any column header to sort all groups by that column (Display Name, Email, Group Type, Cloud Managed, Nesting Depth). Click again to toggle ascending/descending order. Sorting applies to the full dataset, not just the current page.
+- **Show/Hide Converted Groups**: Added checkbox to toggle visibility of already converted (cloud-managed) groups instead of permanently filtering them out.
+- **Simplified Connection**: Merged permission verification and consent flow into the "Connect to Graph" button for a streamlined workflow.
+- **Optional TenantId**: The `-TenantId` parameter is now optional. If not specified, the tool connects to your default tenant.
+
+**Improvements:**
+- Consolidated UI by removing the separate "Verify/Setup Graph Permissions" button.
+- Improved layout with better vertical spacing.
+- Enhanced user experience with single-click connection and automatic permission handling.
+
+### Version 1.0 (Initial Release)
+- Initial release with core functionality for Group SOA conversion.
+- Support for Mail-Enabled Security Groups and Distribution Groups.
+- Nested group detection and smart conversion ordering.
+- Batch conversion and rollback capabilities.
+- Pagination support for large group lists.
+- Automatic permission consent flow.
+
 ## Version
 
-Current version: 1.0
+Current version: 1.01

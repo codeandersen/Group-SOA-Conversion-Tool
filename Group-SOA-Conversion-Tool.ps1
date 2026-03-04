@@ -33,7 +33,7 @@
         C:\PS> .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
 
         .NOTES
-        Version: 1.0
+        Version: 1.01
         
         REQUIREMENTS:
         - Microsoft.Graph.Groups PowerShell module
@@ -55,11 +55,11 @@
     #>
 
 param(
-    [Parameter(Mandatory=$true, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
+    [Parameter(Mandatory=$false, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
     [string]$TenantId
 )
 
-$script:Version = "1.0"
+$script:Version = "1.01"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -75,6 +75,8 @@ $script:NestingMap = @{}
 $script:NestingDepth = @{}
 $script:TenantId = $TenantId
 $script:HideConverted = $false
+$script:SortColumn = ""
+$script:SortDirection = "Ascending"
 
 function Write-Log {
     param(
@@ -118,6 +120,48 @@ function Update-GroupGrid {
         $script:AllGroups = $script:AllGroupsUnfiltered | Where-Object { $_.IsCloudManaged -ne $true }
     } else {
         $script:AllGroups = $script:AllGroupsUnfiltered
+    }
+    
+    # Apply sorting if a column is selected
+    if ($script:SortColumn -ne "") {
+        $script:AllGroups = switch ($script:SortColumn) {
+            "DisplayName" {
+                if ($script:SortDirection -eq "Ascending") {
+                    $script:AllGroups | Sort-Object -Property DisplayName
+                } else {
+                    $script:AllGroups | Sort-Object -Property DisplayName -Descending
+                }
+            }
+            "Email" {
+                if ($script:SortDirection -eq "Ascending") {
+                    $script:AllGroups | Sort-Object -Property Mail
+                } else {
+                    $script:AllGroups | Sort-Object -Property Mail -Descending
+                }
+            }
+            "GroupType" {
+                if ($script:SortDirection -eq "Ascending") {
+                    $script:AllGroups | Sort-Object -Property GroupType
+                } else {
+                    $script:AllGroups | Sort-Object -Property GroupType -Descending
+                }
+            }
+            "IsCloudManaged" {
+                if ($script:SortDirection -eq "Ascending") {
+                    $script:AllGroups | Sort-Object -Property IsCloudManaged
+                } else {
+                    $script:AllGroups | Sort-Object -Property IsCloudManaged -Descending
+                }
+            }
+            "NestingDepth" {
+                if ($script:SortDirection -eq "Ascending") {
+                    $script:AllGroups | Sort-Object -Property { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } }
+                } else {
+                    $script:AllGroups | Sort-Object -Property { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } } -Descending
+                }
+            }
+            default { $script:AllGroups }
+        }
     }
     
     $totalGroups = $script:AllGroups.Count
@@ -242,12 +286,17 @@ function Test-GraphPermissions {
 }
 
 function Connect-GraphSession {
-    Write-Log "Attempting to connect to Microsoft Graph (TenantId: $($script:TenantId))..."
+    $tenantMsg = if ($script:TenantId) { "TenantId: $($script:TenantId)" } else { "default tenant" }
+    Write-Log "Attempting to connect to Microsoft Graph ($tenantMsg)..."
     
     try {
         Import-Module Microsoft.Graph.Groups -ErrorAction Stop
         
-        Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+        if ($script:TenantId) {
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+        } else {
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
+        }
         
         $context = Get-MgContext
         Write-Log "Successfully connected to Microsoft Graph. TenantId: $($context.TenantId)"
@@ -263,7 +312,11 @@ function Connect-GraphSession {
             
             Disconnect-MgGraph -ErrorAction SilentlyContinue
             
-            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+            if ($script:TenantId) {
+                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+            } else {
+                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
+            }
             
             Write-Log "Consent flow completed."
             
@@ -579,7 +632,9 @@ function Convert-GroupToOnPremManaged {
 
 Write-Log "========================================" -Level INFO
 Write-Log "Group SOA Conversion Tool Started" -Level INFO
-Write-Log "Target TenantId: $($script:TenantId)" -Level INFO
+if ($script:TenantId) {
+    Write-Log "Target TenantId: $($script:TenantId)" -Level INFO
+}
 Write-Log "========================================" -Level INFO
 
 if (-not (Search-GraphModule)) {
@@ -855,6 +910,32 @@ $colObjectId.Name = "ObjectId"
 $colObjectId.HeaderText = "Object ID"
 $colObjectId.Visible = $false
 [void]$dataGridView.Columns.Add($colObjectId)
+
+# Add column header click event for sorting
+$dataGridView.Add_ColumnHeaderMouseClick({
+    param($sender, $e)
+    
+    $columnName = $sender.Columns[$e.ColumnIndex].Name
+    
+    # Don't sort on ObjectId column
+    if ($columnName -eq "ObjectId") {
+        return
+    }
+    
+    # Toggle sort direction if clicking the same column
+    if ($script:SortColumn -eq $columnName) {
+        $script:SortDirection = if ($script:SortDirection -eq "Ascending") { "Descending" } else { "Ascending" }
+    } else {
+        $script:SortColumn = $columnName
+        $script:SortDirection = "Ascending"
+    }
+    
+    # Reset to page 1 when sorting
+    $script:CurrentPage = 1
+    
+    # Update the grid with sorted data
+    Update-GroupGrid
+})
 
 $form.Controls.Add($dataGridView)
 
