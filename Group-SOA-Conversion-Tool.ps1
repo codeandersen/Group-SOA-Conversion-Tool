@@ -8,8 +8,15 @@
         GUI tool to manage Group Source of Authority (SOA) conversion between cloud-managed and on-premises-managed
         by toggling the group property `isCloudManaged` via the Microsoft Graph onPremisesSyncBehavior API.
         
-        The tool connects to Microsoft Graph, lists directory-synced mail-enabled security groups and distribution groups,
+        The tool connects to Microsoft Graph, lists all mail-enabled security groups and distribution groups,
         detects nested group relationships, and supports converting groups in the correct bottom-up order.
+        
+        Features:
+        - Automatic permission consent flow for required Graph API permissions
+        - Display all Exchange-relevant groups with their current SOA status (Cloud Managed: True/False)
+        - Optional filter to hide already converted (cloud-managed) groups
+        - Nested group detection to ensure proper conversion order
+        - Pagination support for large group lists
         
         This tool is intended to support the approach described in:
         https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-group-source-of-authority-configure
@@ -27,6 +34,11 @@
 
         .NOTES
         Version: 1.0
+        
+        REQUIREMENTS:
+        - Microsoft.Graph.Groups PowerShell module
+        - Consent to the 'Group-OnPremisesSyncBehavior.ReadWrite.All' permission in Microsoft Graph
+          (The tool will automatically prompt for consent when you connect)
 
         .COPYRIGHT
         MIT License, feel free to distribute and use as you like, please leave author information.
@@ -55,12 +67,14 @@ Add-Type -AssemblyName System.Drawing
 $script:ScriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:LogFile = Join-Path $script:ScriptPath "GroupSOAConversion_$(Get-Date -Format 'yyyyMMdd_HHmm').log"
 $script:AllGroups = @()
+$script:AllGroupsUnfiltered = @()
 $script:CurrentPage = 1
 $script:PageSize = 100
 $script:PermissionOk = $false
 $script:NestingMap = @{}
 $script:NestingDepth = @{}
 $script:TenantId = $TenantId
+$script:HideConverted = $false
 
 function Write-Log {
     param(
@@ -93,10 +107,19 @@ function Write-Log {
 function Update-GroupGrid {
     param(
         [Parameter(Mandatory=$false)]
-        [array]$Groups = $script:AllGroups
+        [array]$Groups = $null
     )
     
-    $script:AllGroups = $Groups
+    if ($null -ne $Groups) {
+        $script:AllGroupsUnfiltered = $Groups
+    }
+    
+    if ($script:HideConverted) {
+        $script:AllGroups = $script:AllGroupsUnfiltered | Where-Object { $_.IsCloudManaged -ne $true }
+    } else {
+        $script:AllGroups = $script:AllGroupsUnfiltered
+    }
+    
     $totalGroups = $script:AllGroups.Count
     $totalPages = [Math]::Ceiling($totalGroups / $script:PageSize)
     
@@ -116,7 +139,15 @@ function Update-GroupGrid {
     if ($totalGroups -gt 0) {
         for ($i = $startIndex; $i -le $endIndex; $i++) {
             $group = $script:AllGroups[$i]
-            $cloudManagedStatus = if ($group.IsCloudManaged -eq "Unknown") { "Unknown" } elseif ($group.IsCloudManaged -eq $true) { "True" } else { "False" }
+            
+            $cloudManagedStatus = if ($group.IsCloudManaged -is [string] -and $group.IsCloudManaged -eq "Unknown") { 
+                "Unknown" 
+            } elseif ($group.IsCloudManaged -eq $true) { 
+                "True" 
+            } else { 
+                "False" 
+            }
+            
             $depth = if ($script:NestingDepth.ContainsKey($group.Id)) { $script:NestingDepth[$group.Id] } else { 0 }
             $dataGridView.Rows.Add($group.DisplayName, $group.Mail, $group.GroupType, $cloudManagedStatus, $depth, $group.Id)
         }
@@ -210,19 +241,6 @@ function Test-GraphPermissions {
     }
 }
 
-function Update-PermissionStatus {
-    if ($script:PermissionOk) {
-        $buttonVerifySetupPermissions.Text = "Graph Permissions OK"
-        $buttonVerifySetupPermissions.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#107C10")
-        $buttonVerifySetupPermissions.ForeColor = [System.Drawing.Color]::White
-    }
-    else {
-        $buttonVerifySetupPermissions.Text = "Verify/Setup Graph Permissions"
-        $buttonVerifySetupPermissions.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#FFB900")
-        $buttonVerifySetupPermissions.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#1F1F1F")
-    }
-}
-
 function Connect-GraphSession {
     Write-Log "Attempting to connect to Microsoft Graph (TenantId: $($script:TenantId))..."
     
@@ -236,8 +254,42 @@ function Connect-GraphSession {
         
         $form.Text = "Group SOA Conversion Tool - Tenant: $($context.TenantId)"
         
-        Test-GraphPermissions | Out-Null
-        Update-PermissionStatus
+        if (Test-GraphPermissions) {
+            Write-Log "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is already consented."
+            $script:PermissionOk = $true
+        }
+        else {
+            Write-Log "Permission missing. Triggering consent flow..." -Level WARNING
+            
+            Disconnect-MgGraph -ErrorAction SilentlyContinue
+            
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+            
+            Write-Log "Consent flow completed."
+            
+            if (Test-GraphPermissions) {
+                Write-Log "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' successfully granted."
+                $script:PermissionOk = $true
+                
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' has been successfully granted.",
+                    "Permission Granted",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                )
+            }
+            else {
+                Write-Log "Permission was not granted after consent flow." -Level WARNING
+                $script:PermissionOk = $false
+                
+                [System.Windows.Forms.MessageBox]::Show(
+                    "The permission was not granted. This may require admin consent.`n`nTo grant manually:`n1. Go to Entra admin center`n2. Navigate to Enterprise Applications`n3. Find 'Microsoft Graph Command Line Tools'`n4. Go to Permissions`n5. Click 'Grant admin consent'`n`nAlternatively, ask your Application Administrator or Cloud Application Administrator to grant consent.",
+                    "Permission Not Granted",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+            }
+        }
         
         return $true
     }
@@ -255,68 +307,17 @@ function Connect-GraphSession {
     }
 }
 
-function Setup-GraphPermissions {
-    Write-Log "Requesting consent for Group-OnPremisesSyncBehavior.ReadWrite.All..."
-    
-    try {
-        Disconnect-MgGraph -ErrorAction SilentlyContinue
-        
-        Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
-        
-        Write-Log "Consent flow completed."
-        
-        if (Test-GraphPermissions) {
-            Write-Log "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' successfully granted."
-            Update-PermissionStatus
-            
-            [System.Windows.Forms.MessageBox]::Show(
-                "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' has been successfully granted.",
-                "Permission Granted",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            )
-            
-            return $true
-        }
-        else {
-            Write-Log "Permission was not granted after consent flow." -Level WARNING
-            Update-PermissionStatus
-            
-            [System.Windows.Forms.MessageBox]::Show(
-                "The permission was not granted. This may require admin consent.`n`nTo grant manually:`n1. Go to Entra admin center`n2. Navigate to Enterprise Applications`n3. Find 'Microsoft Graph Command Line Tools'`n4. Go to Permissions`n5. Click 'Grant admin consent'`n`nAlternatively, ask your Application Administrator or Cloud Application Administrator to grant consent.",
-                "Permission Not Granted",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            )
-            
-            return $false
-        }
-    }
-    catch {
-        Write-Log "Error during permission setup: $($_.Exception.Message)" -Level ERROR
-        
-        [System.Windows.Forms.MessageBox]::Show(
-            "Failed to set up permissions.`n`nError: $($_.Exception.Message)`n`nTo grant manually:`n1. Go to Entra admin center`n2. Navigate to Enterprise Applications`n3. Find 'Microsoft Graph Command Line Tools'`n4. Go to Permissions`n5. Click 'Grant admin consent'",
-            "Permission Setup Failed",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        )
-        
-        return $false
-    }
-}
-
 function Get-ExchangeGroups {
     Write-Log "Retrieving Exchange-relevant groups from Microsoft Graph..."
     
     try {
-        $allSyncedGroups = Get-MgGroup -All -Filter "onPremisesSyncEnabled eq true" -Property Id,DisplayName,Mail,MailEnabled,SecurityEnabled,GroupTypes,OnPremisesSyncEnabled -ErrorAction Stop
+        $allGroups = Get-MgGroup -All -Property Id,DisplayName,Mail,MailEnabled,SecurityEnabled,GroupTypes,OnPremisesSyncEnabled -ErrorAction Stop
         
-        Write-Log "Retrieved $($allSyncedGroups.Count) total on-premises synced groups."
+        Write-Log "Retrieved $($allGroups.Count) total groups."
         
-        $exchangeGroups = $allSyncedGroups | Where-Object {
+        $exchangeGroups = $allGroups | Where-Object {
             $_.MailEnabled -eq $true -and
-            ($_.GroupTypes -eq $null -or $_.GroupTypes.Count -eq 0 -or $_.GroupTypes -notcontains "Unified")
+            ($null -eq $_.GroupTypes -or $_.GroupTypes.Count -eq 0 -or $_.GroupTypes -notcontains "Unified")
         }
         
         Write-Log "Filtered to $($exchangeGroups.Count) Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)."
@@ -345,7 +346,20 @@ function Get-ExchangeGroups {
                 try {
                     $uri = "https://graph.microsoft.com/v1.0/groups/$($group.Id)/onPremisesSyncBehavior?`$select=isCloudManaged"
                     $soaResponse = Invoke-MgGraphRequest -Uri $uri -Method GET -ErrorAction Stop
-                    $isCloudManaged = if ($soaResponse.isCloudManaged -eq $true) { $true } else { $false }
+                    
+                    if ($null -ne $soaResponse) {
+                        if ($null -ne $soaResponse.isCloudManaged) {
+                            $isCloudManaged = if ($soaResponse.isCloudManaged -eq $true) { $true } else { $false }
+                        }
+                        else {
+                            Write-Log "Response received but isCloudManaged property is null for group '$($group.DisplayName)' ($($group.Id))" -Level WARNING
+                            $isCloudManaged = "Unknown"
+                        }
+                    }
+                    else {
+                        Write-Log "Null response received for group '$($group.DisplayName)' ($($group.Id))" -Level WARNING
+                        $isCloudManaged = "Unknown"
+                    }
                     break
                 }
                 catch {
@@ -353,10 +367,27 @@ function Get-ExchangeGroups {
                         Start-Sleep -Milliseconds 500
                     }
                     else {
-                        Write-Log "Could not retrieve SOA status for group '$($group.DisplayName)' ($($group.Id)) after $soaRetries attempts: $($_.Exception.Message)" -Level WARNING
+                        $errorDetails = $_.Exception.Message
+                        if ($_.ErrorDetails.Message) {
+                            try {
+                                $errorJson = $_.ErrorDetails.Message | ConvertFrom-Json
+                                if ($errorJson.error.message) {
+                                    $errorDetails = $errorJson.error.message
+                                }
+                            }
+                            catch {
+                                $errorDetails = $_.ErrorDetails.Message
+                            }
+                        }
+                        Write-Log "Could not retrieve SOA status for group '$($group.DisplayName)' ($($group.Id)) after $soaRetries attempts: $errorDetails" -Level WARNING
                         $isCloudManaged = "Unknown"
                     }
                 }
+            }
+            
+            if ($null -eq $isCloudManaged) {
+                Write-Log "isCloudManaged is still null after all retries for group '$($group.DisplayName)' ($($group.Id))" -Level WARNING
+                $isCloudManaged = "Unknown"
             }
             
             $groupResults += [PSCustomObject]@{
@@ -707,7 +738,6 @@ $buttonDisconnect.Add_Click({
         $buttonDisconnect.Enabled = $false
         
         $script:PermissionOk = $false
-        Update-PermissionStatus
         
         $dataGridView.Rows.Clear()
         
@@ -733,91 +763,35 @@ $buttonDisconnect.Add_Click({
 })
 $form.Controls.Add($buttonDisconnect)
 
-# --- Verify/Setup Graph Permissions Button ---
-$buttonVerifySetupPermissions = New-Object System.Windows.Forms.Button
-$buttonVerifySetupPermissions.Location = New-Object System.Drawing.Point(20, 150)
-$buttonVerifySetupPermissions.Size = New-Object System.Drawing.Size(280, 35)
-$buttonVerifySetupPermissions.Text = "Verify/Setup Graph Permissions"
-$buttonVerifySetupPermissions.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$buttonVerifySetupPermissions.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#FFB900")
-$buttonVerifySetupPermissions.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#1F1F1F")
-$buttonVerifySetupPermissions.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$buttonVerifySetupPermissions.FlatAppearance.BorderSize = 0
-$buttonVerifySetupPermissions.Cursor = [System.Windows.Forms.Cursors]::Hand
-$buttonVerifySetupPermissions.Add_Click({
-    $buttonVerifySetupPermissions.Enabled = $false
-    $statusLabel.Text = "Verifying Graph permissions..."
-    [System.Windows.Forms.Application]::DoEvents()
+# --- Hide Converted Groups Checkbox ---
+$checkboxHideConverted = New-Object System.Windows.Forms.CheckBox
+$checkboxHideConverted.Location = New-Object System.Drawing.Point(565, 105)
+$checkboxHideConverted.Size = New-Object System.Drawing.Size(200, 40)
+$checkboxHideConverted.Text = "Hide Converted Groups"
+$checkboxHideConverted.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$checkboxHideConverted.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#1F1F1F")
+$checkboxHideConverted.Cursor = [System.Windows.Forms.Cursors]::Hand
+$checkboxHideConverted.Checked = $false
+$checkboxHideConverted.Add_CheckedChanged({
+    $script:HideConverted = $checkboxHideConverted.Checked
+    $script:CurrentPage = 1
+    Update-GroupGrid
     
-    Write-Log "Verifying Graph permissions..."
+    $filteredCount = $script:AllGroups.Count
+    $totalCount = $script:AllGroupsUnfiltered.Count
     
-    try {
-        Import-Module Microsoft.Graph.Groups -ErrorAction Stop
-        
-        # Connect if not already connected
-        $context = Get-MgContext
-        if (-not $context) {
-            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
-            $context = Get-MgContext
-            Write-Log "Connected to Microsoft Graph for permission verification. TenantId: $($context.TenantId)"
-            $form.Text = "Group SOA Conversion Tool - Tenant: $($context.TenantId)"
-        }
-        
-        # Check if permission is already consented
-        Test-GraphPermissions | Out-Null
-        
-        if ($script:PermissionOk) {
-            Write-Log "Permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is already consented."
-            Update-PermissionStatus
-            $statusLabel.Text = "Graph permissions verified - OK"
-        }
-        else {
-            # Permission missing - trigger consent flow
-            Write-Log "Permission missing. Triggering consent flow..."
-            $statusLabel.Text = "Permission missing - requesting consent..."
-            [System.Windows.Forms.Application]::DoEvents()
-            
-            Setup-GraphPermissions
-            
-            if ($script:PermissionOk) {
-                Update-PermissionStatus
-                $statusLabel.Text = "Graph permissions granted - OK"
-            }
-            else {
-                Update-PermissionStatus
-                $statusLabel.Text = "Graph permission consent was not granted"
-            }
-        }
-        
-        # Update connection buttons if we have an active session
-        $context = Get-MgContext
-        if ($context) {
-            $buttonConnect.Text = "Connected"
-            $buttonConnect.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#107C10")
-            $buttonConnect.Enabled = $false
-            $buttonRefresh.Enabled = $true
-            $buttonDisconnect.Enabled = $true
-        }
+    if ($script:HideConverted) {
+        $hiddenCount = $totalCount - $filteredCount
+        $statusLabel.Text = "Hiding $hiddenCount converted group(s) - Showing $filteredCount of $totalCount groups"
+    } else {
+        $statusLabel.Text = "Showing all $totalCount groups"
     }
-    catch {
-        Write-Log "Error during permission verify/setup: $($_.Exception.Message)" -Level ERROR
-        $statusLabel.Text = "Permission verification failed"
-        
-        [System.Windows.Forms.MessageBox]::Show(
-            "Failed to verify/setup permissions.`n`nError: $($_.Exception.Message)",
-            "Verification Failed",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        )
-    }
-    
-    $buttonVerifySetupPermissions.Enabled = $true
 })
-$form.Controls.Add($buttonVerifySetupPermissions)
+$form.Controls.Add($checkboxHideConverted)
 
 # --- DataGridView ---
 $dataGridView = New-Object System.Windows.Forms.DataGridView
-$dataGridView.Location = New-Object System.Drawing.Point(20, 195)
+$dataGridView.Location = New-Object System.Drawing.Point(20, 155)
 $dataGridView.Size = New-Object System.Drawing.Size(1060, 370)
 $dataGridView.AllowUserToAddRows = $false
 $dataGridView.AllowUserToDeleteRows = $false
@@ -951,7 +925,7 @@ $buttonConvertToCloud.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor 
 $buttonConvertToCloud.Add_Click({
     if (-not $script:PermissionOk) {
         [System.Windows.Forms.MessageBox]::Show(
-            "The required permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is not consented.`n`nPlease click 'Setup Graph Permissions' first to grant the required permission.",
+            "The required permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is not consented.`n`nPlease reconnect to Graph to grant the required permission.",
             "Permission Required",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1079,7 +1053,7 @@ $buttonConvertToOnPrem.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor
 $buttonConvertToOnPrem.Add_Click({
     if (-not $script:PermissionOk) {
         [System.Windows.Forms.MessageBox]::Show(
-            "The required permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is not consented.`n`nPlease click 'Setup Graph Permissions' first to grant the required permission.",
+            "The required permission 'Group-OnPremisesSyncBehavior.ReadWrite.All' is not consented.`n`nPlease reconnect to Graph to grant the required permission.",
             "Permission Required",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1242,7 +1216,7 @@ $form.Add_Resize({
     $pageInfo.Size = New-Object System.Drawing.Size(($form.ClientSize.Width - 270), 30)
     $buttonNextPage.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - 120), $paginationY)
     
-    $gridHeight = $paginationY - 205
+    $gridHeight = $paginationY - 165
     $dataGridView.Size = New-Object System.Drawing.Size(($form.ClientSize.Width - 40), $gridHeight)
 })
 

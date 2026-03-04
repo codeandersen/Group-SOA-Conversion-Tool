@@ -13,9 +13,9 @@ This is intended to support the approach described in:
 - **Modern GUI interface**: Clean Windows Forms interface with responsive design and modern styling
 - **Automatic module installation**: Checks for `Microsoft.Graph.Groups` and installs it in *CurrentUser* scope if needed
 - **Microsoft Graph connectivity**: Uses modern auth via `Connect-MgGraph`
-- **Permission status indicator**: Real-time green/red indicator showing whether `Group-OnPremisesSyncBehavior.ReadWrite.All` is consented
-- **Setup Graph Permissions button**: One-click consent flow for the required SOA permission
-- **Exchange-focused group list**: Retrieves on-premises synced groups and displays only Mail-Enabled Security Groups and Distribution Groups
+- **Automatic permission consent**: Built-in consent flow for `Group-OnPremisesSyncBehavior.ReadWrite.All` permission during connection
+- **Exchange-focused group list**: Retrieves all Mail-Enabled Security Groups and Distribution Groups (both on-premises synced and cloud-managed)
+- **Hide Converted Groups filter**: Optional checkbox to filter out already converted (cloud-managed) groups from the display
 - **Nested group detection**: Automatically detects nested group relationships via Microsoft Graph and computes nesting depth
 - **Smart conversion ordering**: When converting multiple groups, automatically sorts bottom-up (deepest nested first) to follow Microsoft's recommended approach
 - **Nested group warnings**: Warns if you try to convert a parent group before its nested children
@@ -58,7 +58,7 @@ To grant admin consent for the Graph permissions, you need one of:
 
 ### Setting Up Graph Permissions
 
-The tool has a built-in **"Setup Graph Permissions"** button that triggers the consent flow. However, if that doesn't work (e.g., you lack the Application Administrator role), you can grant consent manually:
+The tool automatically triggers the consent flow when you click **"Connect to Graph"** if permissions are not yet granted. However, if automatic consent doesn't work (e.g., you lack the Application Administrator role), you can grant consent manually:
 
 #### Option 1: Microsoft Entra Admin Center
 1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com)
@@ -85,22 +85,20 @@ The tool has a built-in **"Setup Graph Permissions"** button that triggers the c
 2. **Connect to Microsoft Graph**:
    - Click **"Connect to Graph"** button
    - Sign in with your admin credentials
-   - The tool will automatically load Exchange-relevant on-premises synced groups
+   - The tool will automatically check and request consent for required permissions if needed
+   - The tool will automatically load all Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)
    - Button changes to "Connected" with green color upon successful connection
 
-3. **Check Permission Status**:
-   - Look at the permission indicator (top-right area):
-     - **Green**: "Graph Permissions and Consent OK" — you're ready to convert
-     - **Red**: "Graph Permissions and Consent Missing" — click "Setup Graph Permissions" first
-   - Click **"Setup Graph Permissions"** if the indicator is red
-
-4. **Review Groups**:
-   - The grid shows: Display Name, Email, Group Type, Cloud Managed status, and Nesting Depth
+3. **Review Groups**:
+   - The grid shows: Display Name, Email, Group Type, Cloud Managed status (True/False), and Nesting Depth
+   - **Cloud Managed = False**: On-premises managed groups (candidates for conversion)
+   - **Cloud Managed = True**: Already converted to cloud-managed
    - **Nesting Depth 0** = leaf group (no nested children in scope) — convert these first
    - **Higher depth** = has nested children — convert after children are done
    - Use "Previous" and "Next" buttons to navigate through pages
+   - **Optional**: Check "Hide Converted Groups" to show only on-premises managed groups
 
-5. **Convert Groups to Cloud Managed**:
+4. **Convert Groups to Cloud Managed**:
    - Select one or multiple groups from the list (multi-select supported)
    - Click **"Convert to Cloud Managed"**
    - The tool will:
@@ -110,20 +108,20 @@ The tool has a built-in **"Setup Graph Permissions"** button that triggers the c
    - Confirm the conversion when prompted
    - View batch conversion summary
 
-6. **Roll Back Groups to On-Prem**:
+5. **Roll Back Groups to On-Prem**:
    - Select one or multiple groups
    - Click **"Roll Back to On-Prem"**
    - The tool will sort groups top-down (highest nesting depth first) for rollback
    - **Important**: Remove cloud users from groups and remove groups from access packages before rolling back
    - Note: Rollback is only complete after the next Connect Sync cycle
 
-7. **Refresh Group List**:
+6. **Refresh Group List**:
    - Click **"Refresh Groups"** to reload the group list and SOA status after conversions
 
-8. **View Logs**:
+7. **View Logs**:
    - Click **"Open Log File"** to view the session log in Notepad
 
-9. **Disconnect**:
+8. **Disconnect**:
    - Click **"Disconnect from Graph"** when finished
    - Tool automatically disconnects when closing the window
 
@@ -192,11 +190,13 @@ PATCH https://graph.microsoft.com/v1.0/groups/{ID}/onPremisesSyncBehavior
 ## How This Maps to the Microsoft Guidance
 
 ### What the tool does
-1. Connects to Microsoft Graph and retrieves on-premises synced groups
-2. Filters for Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)
+1. Connects to Microsoft Graph with automatic permission consent flow
+2. Retrieves all groups and filters for Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)
 3. Checks the current `isCloudManaged` status for each group
-4. Detects nested group relationships and computes conversion order
-5. Converts group SOA by calling the `onPremisesSyncBehavior` API
+4. Displays groups with their SOA status (Cloud Managed: True/False)
+5. Optionally filters out already converted groups using the "Hide Converted Groups" checkbox
+6. Detects nested group relationships and computes conversion order
+7. Converts group SOA by calling the `onPremisesSyncBehavior` API
 
 ### What happens after conversion to cloud-managed?
 Once a group is converted to cloud-managed (`isCloudManaged = true`):
@@ -222,13 +222,14 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 - **Connection Issues**: Verify your credentials have the necessary Microsoft Entra ID permissions
 
-- **Conversion Failures (403 errors)**: Ensure `Group-OnPremisesSyncBehavior.ReadWrite.All` is consented — check the permission status indicator
+- **Conversion Failures (403 errors)**: Ensure `Group-OnPremisesSyncBehavior.ReadWrite.All` is consented — reconnect to Graph to trigger the consent flow again
 
-- **Groups Not Showing**: The tool only shows on-premises synced, mail-enabled groups. Cloud-only groups, Microsoft 365 groups, and non-mail-enabled security groups are excluded by design.
+- **Groups Not Showing**: The tool shows all mail-enabled groups (both on-premises synced and cloud-managed). Microsoft 365 groups and non-mail-enabled security groups are excluded by design. Use the "Hide Converted Groups" checkbox to filter out cloud-managed groups.
 
 ## Notes / Limitations
 
-- The tool intentionally filters for Exchange-relevant groups only: Mail-Enabled Security Groups and Distribution Groups synced from on-premises AD.
+- The tool intentionally filters for Exchange-relevant groups only: Mail-Enabled Security Groups and Distribution Groups (both on-premises synced and cloud-managed).
+- Use the "Hide Converted Groups" checkbox to filter the view to show only on-premises managed groups.
 - Dynamic Distribution Groups are **not** supported for SOA conversion.
 - Microsoft 365 (Unified) groups are excluded.
 - Changes may take time to reflect depending on your environment and any directory sync / hybrid processes.
