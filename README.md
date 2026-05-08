@@ -252,6 +252,11 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 ## Changelog
 
+### Version 1.02 (2026-05-08)
+**Improvements:**
+- **Scrollable Confirmation Dialog**: When converting or rolling back multiple groups (2+), a custom scrollable dialog now displays all groups with their nesting depth. This prevents dialog overflow issues when selecting 100+ groups, ensuring Yes/No buttons remain visible and accessible.
+- Enhanced user experience for large batch operations with better visibility of conversion order.
+
 ### Version 1.01 (2026-03-04)
 **New Features:**
 - **Column Sorting**: Click any column header to sort all groups by that column (Display Name, Email, Group Type, Cloud Managed, Nesting Depth). Click again to toggle ascending/descending order. Sorting applies to the full dataset, not just the current page.

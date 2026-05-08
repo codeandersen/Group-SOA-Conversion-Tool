@@ -33,7 +33,23 @@
         C:\PS> .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
 
         .NOTES
-        Version: 1.01
+        Version: 1.02
+        
+        CHANGELOG:
+        v1.02 (2026-05-08)
+        - Added scrollable confirmation dialog for large group selections
+        - Prevents dialog overflow when converting/rolling back 100+ groups
+        - Yes/No buttons now always visible and accessible
+        
+        v1.01
+        - Bug fixes and improvements
+        
+        v1.0 (2026-03-04)
+        - Initial release
+        - Automatic permission consent flow
+        - Display all Exchange-relevant groups with SOA status
+        - Optional filter to hide converted groups
+        - Nested group detection and smart ordering
         
         REQUIREMENTS:
         - Microsoft.Graph.Groups PowerShell module
@@ -55,11 +71,11 @@
     #>
 
 param(
-    [Parameter(Mandatory=$false, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
+    [Parameter(Mandatory=$true, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
     [string]$TenantId
 )
 
-$script:Version = "1.01"
+$script:Version = "1.02"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -75,8 +91,6 @@ $script:NestingMap = @{}
 $script:NestingDepth = @{}
 $script:TenantId = $TenantId
 $script:HideConverted = $false
-$script:SortColumn = ""
-$script:SortDirection = "Ascending"
 
 function Write-Log {
     param(
@@ -106,6 +120,90 @@ function Write-Log {
     Write-Host $logEntry
 }
 
+function Show-ConfirmationDialog {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$GroupList,
+        [string]$Icon = "Question"
+    )
+    
+    $dialogForm = New-Object System.Windows.Forms.Form
+    $dialogForm.Text = $Title
+    $dialogForm.Size = New-Object System.Drawing.Size(650, 600)
+    $dialogForm.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dialogForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialogForm.MaximizeBox = $false
+    $dialogForm.MinimizeBox = $false
+    $dialogForm.BackColor = [System.Drawing.Color]::White
+    
+    $iconLabel = New-Object System.Windows.Forms.Label
+    $iconLabel.Location = New-Object System.Drawing.Point(20, 20)
+    $iconLabel.Size = New-Object System.Drawing.Size(40, 40)
+    $iconLabel.Font = New-Object System.Drawing.Font("Segoe UI", 24)
+    $iconLabel.Text = if ($Icon -eq "Warning") { "⚠" } else { "?" }
+    $iconLabel.ForeColor = if ($Icon -eq "Warning") { [System.Drawing.Color]::Orange } else { [System.Drawing.ColorTranslator]::FromHtml("#0078D4") }
+    $dialogForm.Controls.Add($iconLabel)
+    
+    $messageLabel = New-Object System.Windows.Forms.Label
+    $messageLabel.Location = New-Object System.Drawing.Point(70, 20)
+    $messageLabel.Size = New-Object System.Drawing.Size(550, 60)
+    $messageLabel.Text = $Message
+    $messageLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $messageLabel.AutoSize = $false
+    $dialogForm.Controls.Add($messageLabel)
+    
+    $groupListLabel = New-Object System.Windows.Forms.Label
+    $groupListLabel.Location = New-Object System.Drawing.Point(20, 90)
+    $groupListLabel.Size = New-Object System.Drawing.Size(600, 20)
+    $groupListLabel.Text = "Groups will be processed in this order:"
+    $groupListLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    $dialogForm.Controls.Add($groupListLabel)
+    
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Location = New-Object System.Drawing.Point(20, 115)
+    $textBox.Size = New-Object System.Drawing.Size(600, 370)
+    $textBox.Multiline = $true
+    $textBox.ReadOnly = $true
+    $textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $textBox.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $textBox.Text = $GroupList
+    $textBox.BackColor = [System.Drawing.Color]::WhiteSmoke
+    $textBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $dialogForm.Controls.Add($textBox)
+    
+    $buttonYes = New-Object System.Windows.Forms.Button
+    $buttonYes.Location = New-Object System.Drawing.Point(370, 510)
+    $buttonYes.Size = New-Object System.Drawing.Size(120, 35)
+    $buttonYes.Text = "Yes"
+    $buttonYes.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+    $buttonYes.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $buttonYes.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#0078D4")
+    $buttonYes.ForeColor = [System.Drawing.Color]::White
+    $buttonYes.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+    $buttonYes.FlatAppearance.BorderSize = 0
+    $buttonYes.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $dialogForm.Controls.Add($buttonYes)
+    
+    $buttonNo = New-Object System.Windows.Forms.Button
+    $buttonNo.Location = New-Object System.Drawing.Point(500, 510)
+    $buttonNo.Size = New-Object System.Drawing.Size(120, 35)
+    $buttonNo.Text = "No"
+    $buttonNo.DialogResult = [System.Windows.Forms.DialogResult]::No
+    $buttonNo.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $buttonNo.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#E1E1E1")
+    $buttonNo.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#1F1F1F")
+    $buttonNo.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+    $buttonNo.FlatAppearance.BorderSize = 0
+    $buttonNo.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $dialogForm.Controls.Add($buttonNo)
+    
+    $dialogForm.AcceptButton = $buttonYes
+    $dialogForm.CancelButton = $buttonNo
+    
+    return $dialogForm.ShowDialog()
+}
+
 function Update-GroupGrid {
     param(
         [Parameter(Mandatory=$false)]
@@ -120,48 +218,6 @@ function Update-GroupGrid {
         $script:AllGroups = $script:AllGroupsUnfiltered | Where-Object { $_.IsCloudManaged -ne $true }
     } else {
         $script:AllGroups = $script:AllGroupsUnfiltered
-    }
-    
-    # Apply sorting if a column is selected
-    if ($script:SortColumn -ne "") {
-        $script:AllGroups = switch ($script:SortColumn) {
-            "DisplayName" {
-                if ($script:SortDirection -eq "Ascending") {
-                    $script:AllGroups | Sort-Object -Property DisplayName
-                } else {
-                    $script:AllGroups | Sort-Object -Property DisplayName -Descending
-                }
-            }
-            "Email" {
-                if ($script:SortDirection -eq "Ascending") {
-                    $script:AllGroups | Sort-Object -Property Mail
-                } else {
-                    $script:AllGroups | Sort-Object -Property Mail -Descending
-                }
-            }
-            "GroupType" {
-                if ($script:SortDirection -eq "Ascending") {
-                    $script:AllGroups | Sort-Object -Property GroupType
-                } else {
-                    $script:AllGroups | Sort-Object -Property GroupType -Descending
-                }
-            }
-            "IsCloudManaged" {
-                if ($script:SortDirection -eq "Ascending") {
-                    $script:AllGroups | Sort-Object -Property IsCloudManaged
-                } else {
-                    $script:AllGroups | Sort-Object -Property IsCloudManaged -Descending
-                }
-            }
-            "NestingDepth" {
-                if ($script:SortDirection -eq "Ascending") {
-                    $script:AllGroups | Sort-Object -Property { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } }
-                } else {
-                    $script:AllGroups | Sort-Object -Property { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } } -Descending
-                }
-            }
-            default { $script:AllGroups }
-        }
     }
     
     $totalGroups = $script:AllGroups.Count
@@ -286,17 +342,12 @@ function Test-GraphPermissions {
 }
 
 function Connect-GraphSession {
-    $tenantMsg = if ($script:TenantId) { "TenantId: $($script:TenantId)" } else { "default tenant" }
-    Write-Log "Attempting to connect to Microsoft Graph ($tenantMsg)..."
+    Write-Log "Attempting to connect to Microsoft Graph (TenantId: $($script:TenantId))..."
     
     try {
         Import-Module Microsoft.Graph.Groups -ErrorAction Stop
         
-        if ($script:TenantId) {
-            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
-        } else {
-            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
-        }
+        Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
         
         $context = Get-MgContext
         Write-Log "Successfully connected to Microsoft Graph. TenantId: $($context.TenantId)"
@@ -312,11 +363,7 @@ function Connect-GraphSession {
             
             Disconnect-MgGraph -ErrorAction SilentlyContinue
             
-            if ($script:TenantId) {
-                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
-            } else {
-                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
-            }
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
             
             Write-Log "Consent flow completed."
             
@@ -632,9 +679,7 @@ function Convert-GroupToOnPremManaged {
 
 Write-Log "========================================" -Level INFO
 Write-Log "Group SOA Conversion Tool Started" -Level INFO
-if ($script:TenantId) {
-    Write-Log "Target TenantId: $($script:TenantId)" -Level INFO
-}
+Write-Log "Target TenantId: $($script:TenantId)" -Level INFO
 Write-Log "========================================" -Level INFO
 
 if (-not (Search-GraphModule)) {
@@ -911,32 +956,6 @@ $colObjectId.HeaderText = "Object ID"
 $colObjectId.Visible = $false
 [void]$dataGridView.Columns.Add($colObjectId)
 
-# Add column header click event for sorting
-$dataGridView.Add_ColumnHeaderMouseClick({
-    param($sender, $e)
-    
-    $columnName = $sender.Columns[$e.ColumnIndex].Name
-    
-    # Don't sort on ObjectId column
-    if ($columnName -eq "ObjectId") {
-        return
-    }
-    
-    # Toggle sort direction if clicking the same column
-    if ($script:SortColumn -eq $columnName) {
-        $script:SortDirection = if ($script:SortDirection -eq "Ascending") { "Descending" } else { "Ascending" }
-    } else {
-        $script:SortColumn = $columnName
-        $script:SortDirection = "Ascending"
-    }
-    
-    # Reset to page 1 when sorting
-    $script:CurrentPage = 1
-    
-    # Update the grid with sorted data
-    Update-GroupGrid
-})
-
 $form.Controls.Add($dataGridView)
 
 # --- Pagination ---
@@ -1068,18 +1087,19 @@ $buttonConvertToCloud.Add_Click({
     $selectedCount = $sortedGroups.Count
     $groupList = ($sortedGroups | ForEach-Object { "$($_.DisplayName) (Depth: $(if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 }))" }) -join "`n"
     
-    $confirmMessage = if ($selectedCount -eq 1) {
-        "Are you sure you want to convert group '$($sortedGroups[0].DisplayName)' to Cloud Managed?"
+    if ($selectedCount -eq 1) {
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Are you sure you want to convert group '$($sortedGroups[0].DisplayName)' to Cloud Managed?",
+            "Confirm Conversion",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
     } else {
-        "Are you sure you want to convert $selectedCount groups to Cloud Managed?`n`nGroups will be converted in this order (bottom-up):`n$groupList"
+        $result = Show-ConfirmationDialog -Title "Confirm Conversion" `
+            -Message "Are you sure you want to convert $selectedCount groups to Cloud Managed?`n`nGroups will be converted in bottom-up order (deepest nested first)." `
+            -GroupList $groupList `
+            -Icon "Question"
     }
-    
-    $result = [System.Windows.Forms.MessageBox]::Show(
-        $confirmMessage,
-        "Confirm Conversion",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
     
     if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
         $successCount = 0
@@ -1168,18 +1188,19 @@ $buttonConvertToOnPrem.Add_Click({
     $selectedCount = $sortedGroups.Count
     $groupList = ($sortedGroups | ForEach-Object { "$($_.DisplayName) (Depth: $(if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 }))" }) -join "`n"
     
-    $confirmMessage = if ($selectedCount -eq 1) {
-        "Are you sure you want to roll back group '$($sortedGroups[0].DisplayName)' to On-Premises Managed?`n`nIMPORTANT: Make sure to remove cloud users from the group and remove the group from access packages before rolling back."
+    if ($selectedCount -eq 1) {
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Are you sure you want to roll back group '$($sortedGroups[0].DisplayName)' to On-Premises Managed?`n`nIMPORTANT: Make sure to remove cloud users from the group and remove the group from access packages before rolling back.",
+            "Confirm Rollback",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
     } else {
-        "Are you sure you want to roll back $selectedCount groups to On-Premises Managed?`n`nGroups will be rolled back in this order (top-down):`n$groupList`n`nIMPORTANT: Make sure to remove cloud users from the groups and remove the groups from access packages before rolling back."
+        $result = Show-ConfirmationDialog -Title "Confirm Rollback" `
+            -Message "Are you sure you want to roll back $selectedCount groups to On-Premises Managed?`n`nGroups will be rolled back in top-down order (parents first).`n`nIMPORTANT: Make sure to remove cloud users from the groups and remove the groups from access packages before rolling back." `
+            -GroupList $groupList `
+            -Icon "Warning"
     }
-    
-    $result = [System.Windows.Forms.MessageBox]::Show(
-        $confirmMessage,
-        "Confirm Rollback",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
     
     if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
         $successCount = 0
