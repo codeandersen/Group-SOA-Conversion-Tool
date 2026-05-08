@@ -91,6 +91,8 @@ $script:NestingMap = @{}
 $script:NestingDepth = @{}
 $script:TenantId = $TenantId
 $script:HideConverted = $false
+$script:SortColumn = $null
+$script:SortAscending = $true
 
 function Write-Log {
     param(
@@ -218,6 +220,48 @@ function Update-GroupGrid {
         $script:AllGroups = $script:AllGroupsUnfiltered | Where-Object { $_.IsCloudManaged -ne $true }
     } else {
         $script:AllGroups = $script:AllGroupsUnfiltered
+    }
+    
+    # Apply sorting if a column is selected
+    if ($null -ne $script:SortColumn) {
+        $script:AllGroups = switch ($script:SortColumn) {
+            "DisplayName" {
+                if ($script:SortAscending) {
+                    $script:AllGroups | Sort-Object { $_.DisplayName }
+                } else {
+                    $script:AllGroups | Sort-Object { $_.DisplayName } -Descending
+                }
+            }
+            "Email" {
+                if ($script:SortAscending) {
+                    $script:AllGroups | Sort-Object { $_.Mail }
+                } else {
+                    $script:AllGroups | Sort-Object { $_.Mail } -Descending
+                }
+            }
+            "GroupType" {
+                if ($script:SortAscending) {
+                    $script:AllGroups | Sort-Object { $_.GroupType }
+                } else {
+                    $script:AllGroups | Sort-Object { $_.GroupType } -Descending
+                }
+            }
+            "IsCloudManaged" {
+                if ($script:SortAscending) {
+                    $script:AllGroups | Sort-Object { $_.IsCloudManaged }
+                } else {
+                    $script:AllGroups | Sort-Object { $_.IsCloudManaged } -Descending
+                }
+            }
+            "NestingDepth" {
+                if ($script:SortAscending) {
+                    $script:AllGroups | Sort-Object { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } }
+                } else {
+                    $script:AllGroups | Sort-Object { if ($script:NestingDepth.ContainsKey($_.Id)) { $script:NestingDepth[$_.Id] } else { 0 } } -Descending
+                }
+            }
+            default { $script:AllGroups }
+        }
     }
     
     $totalGroups = $script:AllGroups.Count
@@ -967,6 +1011,44 @@ $colObjectId.Name = "ObjectId"
 $colObjectId.HeaderText = "Object ID"
 $colObjectId.Visible = $false
 [void]$dataGridView.Columns.Add($colObjectId)
+
+$dataGridView.Add_ColumnHeaderMouseClick({
+    param($sender, $e)
+    
+    $columnName = $sender.Columns[$e.ColumnIndex].Name
+    
+    # Don't sort on ObjectId column
+    if ($columnName -eq "ObjectId") {
+        return
+    }
+    
+    # Toggle sort direction if clicking the same column
+    if ($script:SortColumn -eq $columnName) {
+        $script:SortAscending = -not $script:SortAscending
+    } else {
+        $script:SortColumn = $columnName
+        $script:SortAscending = $true
+    }
+    
+    # Reset to first page when sorting
+    $script:CurrentPage = 1
+    
+    # Update the grid with sorted data
+    Update-GroupGrid
+    
+    # Update column header sort indicators
+    foreach ($col in $sender.Columns) {
+        if ($col.Name -eq $script:SortColumn) {
+            $col.HeaderText = if ($script:SortAscending) {
+                $col.HeaderText -replace ' ▼| ▲', '' + " ▲"
+            } else {
+                $col.HeaderText -replace ' ▼| ▲', '' + " ▼"
+            }
+        } else {
+            $col.HeaderText = $col.HeaderText -replace ' ▼| ▲', ''
+        }
+    }
+})
 
 $form.Controls.Add($dataGridView)
 
