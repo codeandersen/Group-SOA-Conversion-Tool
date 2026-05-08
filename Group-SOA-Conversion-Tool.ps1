@@ -71,7 +71,7 @@
     #>
 
 param(
-    [Parameter(Mandatory=$true, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
+    [Parameter(Mandatory=$false, HelpMessage="Enter the Entra ID (Azure AD) tenant ID (GUID) to connect to.")]
     [string]$TenantId
 )
 
