@@ -1035,19 +1035,6 @@ $dataGridView.Add_ColumnHeaderMouseClick({
     
     # Update the grid with sorted data
     Update-GroupGrid
-    
-    # Update column header sort indicators
-    foreach ($col in $sender.Columns) {
-        if ($col.Name -eq $script:SortColumn) {
-            $col.HeaderText = if ($script:SortAscending) {
-                $col.HeaderText -replace ' ▼| ▲', '' + " ▲"
-            } else {
-                $col.HeaderText -replace ' ▼| ▲', '' + " ▼"
-            }
-        } else {
-            $col.HeaderText = $col.HeaderText -replace ' ▼| ▲', ''
-        }
-    }
 })
 
 $form.Controls.Add($dataGridView)
