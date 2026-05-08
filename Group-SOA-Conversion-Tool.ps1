@@ -696,9 +696,26 @@ function Convert-GroupToCloudManaged {
         return $true
     }
     catch {
-        Write-Log "Failed to convert group '$displayName' ($groupId) to Cloud Managed. Error: $($_.Exception.Message)" -Level ERROR
+        Write-Log "API error during conversion: $($_.Exception.Message). Verifying actual status..." -Level WARNING
         
-        return $false
+        # Verify if conversion actually succeeded despite API error
+        Start-Sleep -Seconds 2
+        try {
+            $verifyUri = "https://graph.microsoft.com/v1.0/groups/$groupId/onPremisesSyncBehavior?`$select=isCloudManaged"
+            $result = Invoke-MgGraphRequest -Uri $verifyUri -Method GET -ErrorAction Stop
+            
+            if ($result.isCloudManaged -eq $true) {
+                Write-Log "Verification confirmed: Group '$displayName' ($groupId) was successfully converted to Cloud Managed (despite API error)." -Level INFO
+                return $true
+            } else {
+                Write-Log "Verification failed: Group '$displayName' ($groupId) was NOT converted. Error: $($_.Exception.Message)" -Level ERROR
+                return $false
+            }
+        }
+        catch {
+            Write-Log "Failed to verify conversion status for group '$displayName' ($groupId). Error: $($_.Exception.Message)" -Level ERROR
+            return $false
+        }
     }
 }
 
@@ -723,9 +740,26 @@ function Convert-GroupToOnPremManaged {
         return $true
     }
     catch {
-        Write-Log "Failed to roll back group '$displayName' ($groupId) to On-Premises Managed. Error: $($_.Exception.Message)" -Level ERROR
+        Write-Log "API error during rollback: $($_.Exception.Message). Verifying actual status..." -Level WARNING
         
-        return $false
+        # Verify if rollback actually succeeded despite API error
+        Start-Sleep -Seconds 2
+        try {
+            $verifyUri = "https://graph.microsoft.com/v1.0/groups/$groupId/onPremisesSyncBehavior?`$select=isCloudManaged"
+            $result = Invoke-MgGraphRequest -Uri $verifyUri -Method GET -ErrorAction Stop
+            
+            if ($result.isCloudManaged -eq $false) {
+                Write-Log "Verification confirmed: Group '$displayName' ($groupId) was successfully rolled back to On-Premises Managed (despite API error)." -Level INFO
+                return $true
+            } else {
+                Write-Log "Verification failed: Group '$displayName' ($groupId) was NOT rolled back. Error: $($_.Exception.Message)" -Level ERROR
+                return $false
+            }
+        }
+        catch {
+            Write-Log "Failed to verify rollback status for group '$displayName' ($groupId). Error: $($_.Exception.Message)" -Level ERROR
+            return $false
+        }
     }
 }
 
