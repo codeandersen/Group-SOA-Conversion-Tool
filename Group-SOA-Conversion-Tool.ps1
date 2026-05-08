@@ -342,12 +342,20 @@ function Test-GraphPermissions {
 }
 
 function Connect-GraphSession {
-    Write-Log "Attempting to connect to Microsoft Graph (TenantId: $($script:TenantId))..."
+    if ([string]::IsNullOrEmpty($script:TenantId)) {
+        Write-Log "Attempting to connect to Microsoft Graph (default tenant)..."
+    } else {
+        Write-Log "Attempting to connect to Microsoft Graph (TenantId: $($script:TenantId))..."
+    }
     
     try {
         Import-Module Microsoft.Graph.Groups -ErrorAction Stop
         
-        Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+        if ([string]::IsNullOrEmpty($script:TenantId)) {
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
+        } else {
+            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+        }
         
         $context = Get-MgContext
         Write-Log "Successfully connected to Microsoft Graph. TenantId: $($context.TenantId)"
@@ -363,7 +371,11 @@ function Connect-GraphSession {
             
             Disconnect-MgGraph -ErrorAction SilentlyContinue
             
-            Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+            if ([string]::IsNullOrEmpty($script:TenantId)) {
+                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -ErrorAction Stop -NoWelcome
+            } else {
+                Connect-MgGraph -Scopes 'Group.ReadWrite.All','Group-OnPremisesSyncBehavior.ReadWrite.All' -TenantId $script:TenantId -ErrorAction Stop -NoWelcome
+            }
             
             Write-Log "Consent flow completed."
             
