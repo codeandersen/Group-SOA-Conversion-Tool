@@ -17,6 +17,7 @@
         - Optional filter to hide already converted (cloud-managed) groups
         - Nested group detection to ensure proper conversion order
         - Pagination support for large group lists
+        - Export the current group list to a CSV file in the script directory
         
         This tool is intended to support the approach described in:
         https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-group-source-of-authority-configure
@@ -33,9 +34,12 @@
         C:\PS> .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
 
         .NOTES
-        Version: 1.02
+        Version: 1.03
         
         CHANGELOG:
+        v1.03
+        - Added "Export List to CSV" button to export the current group list to the script directory
+        
         v1.02 (2026-05-08)
         - Added scrollable confirmation dialog for large group selections
         - Prevents dialog overflow when converting/rolling back 100+ groups
@@ -75,7 +79,7 @@ param(
     [string]$TenantId
 )
 
-$script:Version = "1.02"
+$script:Version = "1.03"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -769,6 +773,82 @@ function Convert-GroupToOnPremManaged {
     }
 }
 
+function Export-GroupsToCsv {
+    $groups = @($script:AllGroups)
+    
+    if ($groups.Count -eq 0) {
+        Write-Log "CSV export requested but no groups are loaded." -Level WARNING
+        
+        [System.Windows.Forms.MessageBox]::Show(
+            "There are no groups to export.`n`nConnect to Microsoft Graph and load the group list first.",
+            "Nothing to Export",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        
+        return
+    }
+    
+    $csvFile = Join-Path $script:ScriptPath "GroupSOAExport_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    
+    Write-Log "Exporting $($groups.Count) group(s) to CSV: $csvFile"
+    
+    try {
+        $exportData = foreach ($group in $groups) {
+            $cloudManagedStatus = if ($group.IsCloudManaged -is [string] -and $group.IsCloudManaged -eq "Unknown") {
+                "Unknown"
+            } elseif ($group.IsCloudManaged -eq $true) {
+                "True"
+            } else {
+                "False"
+            }
+            
+            [PSCustomObject]@{
+                DisplayName     = $group.DisplayName
+                Mail            = $group.Mail
+                GroupType       = $group.GroupType
+                IsCloudManaged  = $cloudManagedStatus
+                NestingDepth    = if ($script:NestingDepth.ContainsKey($group.Id)) { $script:NestingDepth[$group.Id] } else { 0 }
+                SecurityEnabled = $group.SecurityEnabled
+                MailEnabled     = $group.MailEnabled
+                ObjectId        = $group.Id
+            }
+        }
+        
+        $exportData | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+        
+        Write-Log "Successfully exported $($groups.Count) group(s) to $csvFile"
+        
+        $statusLabel.Text = "Exported $($groups.Count) group(s) to CSV"
+        
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "Exported $($groups.Count) group(s) to:`n`n$csvFile`n`nDo you want to open the file now?",
+            "Export Complete",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        )
+        
+        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
+            try {
+                Start-Process -FilePath $csvFile -ErrorAction Stop
+            }
+            catch {
+                Write-Log "Could not open exported CSV file: $($_.Exception.Message)" -Level WARNING
+            }
+        }
+    }
+    catch {
+        Write-Log "Failed to export groups to CSV: $($_.Exception.Message)" -Level ERROR
+        
+        [System.Windows.Forms.MessageBox]::Show(
+            "Failed to export the group list to CSV.`n`nError: $($_.Exception.Message)",
+            "Export Failed",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+}
+
 # ============================================================
 # MAIN SCRIPT - GUI SETUP
 # ============================================================
@@ -984,6 +1064,22 @@ $checkboxHideConverted.Add_CheckedChanged({
     }
 })
 $form.Controls.Add($checkboxHideConverted)
+
+# --- Export Button ---
+$buttonExportCsv = New-Object System.Windows.Forms.Button
+$buttonExportCsv.Location = New-Object System.Drawing.Point(790, 105)
+$buttonExportCsv.Size = New-Object System.Drawing.Size(170, 40)
+$buttonExportCsv.Text = "Export List to CSV"
+$buttonExportCsv.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$buttonExportCsv.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#E1E1E1")
+$buttonExportCsv.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#1F1F1F")
+$buttonExportCsv.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$buttonExportCsv.FlatAppearance.BorderSize = 0
+$buttonExportCsv.Cursor = [System.Windows.Forms.Cursors]::Hand
+$buttonExportCsv.Add_Click({
+    Export-GroupsToCsv
+})
+$form.Controls.Add($buttonExportCsv)
 
 # --- DataGridView ---
 $dataGridView = New-Object System.Windows.Forms.DataGridView

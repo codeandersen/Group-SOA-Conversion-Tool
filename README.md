@@ -25,6 +25,7 @@ This is intended to support the approach described in:
 - **Cloud conversion**: Sets `isCloudManaged = true` via the `onPremisesSyncBehavior` API
 - **On-prem rollback**: Sets `isCloudManaged = false` via the `onPremisesSyncBehavior` API
 - **Pagination support**: Displays groups in pages of 100 with Previous/Next navigation
+- **CSV export**: Export the full group list (all pages, respecting the current filter and sort order) to a timestamped CSV file in the script directory
 - **Logging + quick access**: Writes a timestamped log file and includes an **Open Log File** button
 - **Connection management**: Connect, refresh, and disconnect from Microsoft Graph with status indicators
 - **Logo support**: Displays custom logo (logo.png) if present in script directory
@@ -124,10 +125,15 @@ The tool automatically triggers the consent flow when you click **"Connect to Gr
 6. **Refresh Group List**:
    - Click **"Refresh Groups"** to reload the group list and SOA status after conversions
 
-7. **View Logs**:
+7. **Export the Group List**:
+   - Click **"Export List to CSV"** to write the group list to a CSV file in the script directory
+   - The export contains **all** groups currently in the list (every page), honouring the "Hide Converted Groups" filter and the active column sort
+   - You are prompted to open the file after the export completes
+
+8. **View Logs**:
    - Click **"Open Log File"** to view the session log in Notepad
 
-8. **Disconnect**:
+9. **Disconnect**:
    - Click **"Disconnect from Graph"** when finished
    - Tool automatically disconnects when closing the window
 
@@ -170,7 +176,28 @@ Logged operations include:
 - Nested group analysis
 - Group conversions to cloud managed
 - Group rollbacks to on-premises managed
+- CSV exports of the group list
 - Any errors or warnings
+
+## CSV Exports
+
+Clicking **"Export List to CSV"** creates a file in the same directory as the script with the naming format:
+```
+GroupSOAExport_YYYYMMDD_HHMMSS.csv
+```
+
+The file is UTF-8 encoded and contains the following columns:
+
+| Column | Description |
+| --- | --- |
+| `DisplayName` | Group display name |
+| `Mail` | Primary email address |
+| `GroupType` | Mail-Enabled Security Group or Distribution Group |
+| `IsCloudManaged` | `True`, `False` or `Unknown` |
+| `NestingDepth` | Computed nesting depth (0 = leaf group) |
+| `SecurityEnabled` | Whether the group is security enabled |
+| `MailEnabled` | Whether the group is mail enabled |
+| `ObjectId` | Entra ID object ID of the group |
 
 ## Graph API Calls
 
@@ -252,6 +279,10 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 ## Changelog
 
+### Version 1.03
+**New Features:**
+- **CSV Export**: Added an "Export List to CSV" button that writes the current group list to a timestamped `GroupSOAExport_YYYYMMDD_HHMMSS.csv` file in the script directory. The export covers all pages and respects the "Hide Converted Groups" filter and the active column sort.
+
 ### Version 1.02 (2026-05-08)
 **Improvements:**
 - **Scrollable Confirmation Dialog**: When converting or rolling back multiple groups (2+), a custom scrollable dialog now displays all groups with their nesting depth. This prevents dialog overflow issues when selecting 100+ groups, ensuring Yes/No buttons remain visible and accessible.
@@ -279,4 +310,4 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 ## Version
 
-Current version: 1.01
+Current version: 1.03
