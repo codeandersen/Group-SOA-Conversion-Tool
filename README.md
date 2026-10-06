@@ -279,6 +279,11 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 ## Changelog
 
+### Version 1.04
+**Bug Fixes:**
+- Fixed `'no valid module file was found'` error after auto-installing `Microsoft.Graph.Groups` when the CurrentUser module folder is not in `$env:PSModulePath` (e.g. Exchange servers with a user-level PSModulePath override, or redirected Documents folders). The script now adds the install location's module root to the session `PSModulePath` before importing.
+- The module is now verified as discoverable after installation; if it still cannot be found, the failure is reported with `PSModulePath` diagnostics instead of falsely reporting success.
+
 ### Version 1.03
 **New Features:**
 - **CSV Export**: Added an "Export List to CSV" button that writes the current group list to a timestamped `GroupSOAExport_YYYYMMDD_HHMMSS.csv` file in the script directory. The export covers all pages and respects the "Hide Converted Groups" filter and the active column sort.
@@ -310,4 +315,4 @@ Once a group is converted to cloud-managed (`isCloudManaged = true`):
 
 ## Version
 
-Current version: 1.03
+Current version: 1.04

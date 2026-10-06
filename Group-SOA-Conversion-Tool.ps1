@@ -34,9 +34,13 @@
         C:\PS> .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
 
         .NOTES
-        Version: 1.03
+        Version: 1.04
         
         CHANGELOG:
+        v1.04
+        - Fixed 'no valid module file was found' after auto-install when the CurrentUser module folder is not in PSModulePath (e.g. Exchange servers, redirected Documents)
+        - Verify module is discoverable after installation and log PSModulePath diagnostics
+        
         v1.03
         - Added "Export List to CSV" button to export the current group list to the script directory
         
@@ -79,7 +83,7 @@ param(
     [string]$TenantId
 )
 
-$script:Version = "1.03"
+$script:Version = "1.04"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -310,8 +314,26 @@ function Update-GroupGrid {
     $buttonNextPage.Enabled = ($script:CurrentPage -lt $totalPages)
 }
 
+function Add-GraphModulePathToSession {
+    $candidates = @(Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules')
+    $installed = Get-InstalledModule -Name Microsoft.Graph.Groups -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($installed -and $installed.InstalledLocation) {
+        Write-Log "Microsoft.Graph.Groups installed location: $($installed.InstalledLocation)"
+        $candidates += Split-Path (Split-Path $installed.InstalledLocation -Parent) -Parent
+    }
+    $current = $env:PSModulePath -split ';' | ForEach-Object { $_.TrimEnd('\') }
+    foreach ($path in ($candidates | Select-Object -Unique)) {
+        if ((Test-Path $path) -and ($current -notcontains $path.TrimEnd('\'))) {
+            $env:PSModulePath = "$path;$env:PSModulePath"
+            Write-Log "Added '$path' to PSModulePath for this session." -Level WARNING
+        }
+    }
+}
+
 function Search-GraphModule {
     Write-Log "Checking for Microsoft Graph Groups module..."
+    
+    Add-GraphModulePathToSession
     
     $module = Get-Module -ListAvailable -Name Microsoft.Graph.Groups
     
@@ -327,6 +349,13 @@ function Search-GraphModule {
             )
             
             Install-Module -Name Microsoft.Graph.Groups -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            
+            Add-GraphModulePathToSession
+            if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Groups)) {
+                Write-Log "PSModulePath: $env:PSModulePath" -Level ERROR
+                throw "Module was installed but cannot be found in any PSModulePath directory."
+            }
+            
             Write-Log "Microsoft.Graph.Groups module installed successfully." -Level INFO
             
             [System.Windows.Forms.MessageBox]::Show(
@@ -397,6 +426,7 @@ function Connect-GraphSession {
     }
     
     try {
+        Add-GraphModulePathToSession
         Import-Module Microsoft.Graph.Groups -ErrorAction Stop
         
         if ([string]::IsNullOrEmpty($script:TenantId)) {
@@ -455,6 +485,7 @@ function Connect-GraphSession {
     }
     catch {
         Write-Log "Failed to connect to Microsoft Graph: $($_.Exception.Message)" -Level ERROR
+        Write-Log "PSModulePath: $env:PSModulePath" -Level ERROR
         
         [System.Windows.Forms.MessageBox]::Show(
             "Failed to connect to Microsoft Graph.`n`nError: $($_.Exception.Message)",
