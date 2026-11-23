@@ -1,0 +1,6 @@
+# Runtime output of the Group SOA Conversion Tool (contains tenant data)
+Logs/
+Reports/
+*.log
+GroupSOAExport_*.csv
+GroupSOA_*.csv

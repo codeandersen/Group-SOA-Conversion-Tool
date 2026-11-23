@@ -2,317 +2,103 @@
 
 A PowerShell GUI tool for converting the *Group Source of Authority (SOA)* between on-premises Active Directory and Microsoft Entra ID (cloud) by toggling `isCloudManaged` via the Microsoft Graph `onPremisesSyncBehavior` API.
 
-This tool focuses specifically on **Exchange on-premises relevant groups**: Mail-Enabled Security Groups and Distribution Groups (not Dynamic Distribution Groups or Microsoft 365 Groups).
-
 This is intended to support the approach described in:
 - [Guidance for Group SOA](https://learn.microsoft.com/en-us/entra/identity/hybrid/concept-group-source-of-authority-guidance)
 - [Configure Group SOA](https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-group-source-of-authority-configure)
 
-## Features
+## Versions
 
-- **Modern GUI interface**: Clean Windows Forms interface with responsive design and modern styling
-- **Automatic module installation**: Checks for `Microsoft.Graph.Groups` and installs it in *CurrentUser* scope if needed
-- **Microsoft Graph connectivity**: Uses modern auth via `Connect-MgGraph`
-- **Automatic permission consent**: Built-in consent flow for `Group-OnPremisesSyncBehavior.ReadWrite.All` permission during connection
-- **Exchange-focused group list**: Retrieves all Mail-Enabled Security Groups and Distribution Groups (both on-premises synced and cloud-managed)
-- **Hide Converted Groups filter**: Optional checkbox to filter out already converted (cloud-managed) groups from the display
-- **Nested group detection**: Automatically detects nested group relationships via Microsoft Graph and computes nesting depth
-- **Smart conversion ordering**: When converting multiple groups, automatically sorts bottom-up (deepest nested first) to follow Microsoft's recommended approach
-- **Nested group warnings**: Warns if you try to convert a parent group before its nested children
-- **Smart rollback ordering**: When rolling back, processes top-down (parents first, then children)
-- **Rollback safety reminder**: Reminds you to remove cloud users and access packages before rolling back
-- **Batch conversion**: Multi-select groups and convert in bulk with confirmation dialogs
-- **Cloud conversion**: Sets `isCloudManaged = true` via the `onPremisesSyncBehavior` API
-- **On-prem rollback**: Sets `isCloudManaged = false` via the `onPremisesSyncBehavior` API
-- **Pagination support**: Displays groups in pages of 100 with Previous/Next navigation
-- **CSV export**: Export the full group list (all pages, respecting the current filter and sort order) to a timestamped CSV file in the script directory
-- **Logging + quick access**: Writes a timestamped log file and includes an **Open Log File** button
-- **Connection management**: Connect, refresh, and disconnect from Microsoft Graph with status indicators
-- **Logo support**: Displays custom logo (logo.png) if present in script directory
-- **Responsive layout**: Automatically adjusts to window resizing
+The repository contains three versions, each in its own folder with its own README:
+
+- **[v1.03](v1.03/README.md)**: the original tool.
+- **[v1.04](v1.04/README.md)**: v1.03 plus a fix for the Microsoft Graph module not being found after a CurrentUser install (for example on Exchange servers or with redirected Documents). Otherwise it behaves exactly like v1.03.
+- **[v1.08](v1.08/README.md)**: the enterprise version for large tenants. It also contains the v1.04 module fix.
+
+The table compares the original line (v1.03 / v1.04) with v1.08:
+
+| | [v1.03](v1.03/README.md) / [v1.04](v1.04/README.md) | [v1.08](v1.08/README.md) |
+| --- | --- | --- |
+| Script | `v1.03\Group-SOA-Conversion-Tool_1.03.ps1` / `v1.04\Group-SOA-Conversion-Tool_1.04.ps1` | `v1.08\Group-SOA-Conversion-Tool_1.08.ps1` |
+| Target | Small and medium tenants, Exchange-focused | Large tenants (15K+ synced groups) |
+| Module path fix after install | v1.04 only | Yes |
+| Groups listed | All mail-enabled security groups and distribution groups (synced, converted and cloud-only) | On-premises synced and already converted groups: Security Groups, Mail-Enabled Security Groups, Distribution Groups. Cloud-only groups are excluded |
+| Loading | Automatically after Connect | **Search Groups** with search scope tick boxes |
+| Graph calls | One request per group | JSON batching (20 per call), Retry-After aware throttling |
+| Nesting analysis | Always on load | On load, or on demand for the selected groups |
+| Filters | Hide converted groups | Group type, free-text search, CSV import |
+| CSV waves | - | Load or filter groups from a CSV (ObjectId / Mail / DisplayName) |
+| Bulk selection | Multi-select on the current page | Multi-select, or **Select all** across all pages |
+| Convert / rollback | One group at a time, in depth order | Batches per nesting depth level |
+| Results | Success / Failed (unverifiable counted as success) | Success / Failed / Unverified / Skipped, plus a per-run CSV report |
+| Progress / cancel | Status text | Progress with ETA, **Cancel job** |
+| Log location | Script folder | `Logs` subfolder |
+
+### Which version should I use?
+
+- **v1.04** if you want the simple, proven tool for a modest number of Exchange groups. It lists everything mail-enabled, including cloud-only groups. Prefer it over v1.03, which is kept for reference.
+- **v1.08** if you have many synced groups, also need plain (non-mail-enabled) security groups, want to run CSV-driven conversion waves, or need a report per run.
 
 ## Requirements
 
 - Windows PowerShell 5.1 or later
-- Microsoft Graph PowerShell module: `Microsoft.Graph.Groups`
-- Connectivity to Microsoft Graph endpoints
-- Appropriate Microsoft Entra ID permissions (see below)
-
-### Prerequisites
-
-Before using this tool, ensure:
-
-1. **Microsoft Entra Connect Sync** version **2.5.76.0** or later is installed, OR
-2. **Microsoft Entra Cloud Sync** version **1.1.1370.0** or later is installed
+- Microsoft Graph PowerShell module `Microsoft.Graph.Groups` (both versions install it in *CurrentUser* scope if it's missing)
+- Microsoft Entra Connect Sync **2.5.76.0** or later, or Microsoft Entra Cloud Sync **1.1.1370.0** or later
 
 ### Permissions / Roles
 
-At minimum, the signed-in admin account must have:
+- **Hybrid Administrator** role, to read and write `onPremisesSyncBehavior`. Without it the API returns 403.
+- Graph permissions `Group.ReadWrite.All` and `Group-OnPremisesSyncBehavior.ReadWrite.All`.
+- To grant admin consent: **Cloud Application Administrator** or **Application Administrator**.
 
-- **Hybrid Identity Administrator** role (least privileged role required for reading and writing `onPremisesSyncBehavior` — without this role, the API returns 403 Forbidden)
-- **Group.ReadWrite.All** Graph permission (for reading and writing group properties)
-- **Group-OnPremisesSyncBehavior.ReadWrite.All** Graph permission (for toggling the SOA)
+Both versions trigger the consent flow when you click **Connect to Graph**. To grant consent manually:
+1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+2. Go to **Enterprise Applications** > **Microsoft Graph Command Line Tools** > **Permissions**.
+3. Click **Grant admin consent for [tenant name]**.
 
-To grant admin consent for the Graph permissions, you need one of:
-- **Cloud Application Administrator** (recommended, least-privilege for consent)
-- **Application Administrator**
+## Quick Start
 
-### Setting Up Graph Permissions
+```powershell
+# Original version (with the module path fix)
+cd .\v1.04
+.\Group-SOA-Conversion-Tool_1.04.ps1 [-TenantId "00000000-0000-0000-0000-000000000000"]
 
-The tool automatically triggers the consent flow when you click **"Connect to Graph"** if permissions are not yet granted. However, if automatic consent doesn't work (e.g., you lack the Application Administrator role), you can grant consent manually:
-
-#### Option 1: Microsoft Entra Admin Center
-1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com)
-2. Navigate to **Enterprise Applications**
-3. Find **Microsoft Graph Command Line Tools**
-4. Go to **Permissions**
-5. Click **Grant admin consent for [tenant name]**
-6. Accept the `Group-OnPremisesSyncBehavior.ReadWrite.All` permission
-
-#### Option 2: Graph Explorer
-1. Open [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
-2. Sign in as an Application Administrator or Cloud Application Administrator
-3. Select the profile icon → **Consent to permissions**
-4. Search for `Group-OnPremisesSyncBehavior` and select **Consent**
-
-## Usage
-
-1. **Run the Script**:
-   ```powershell
-   .\Group-SOA-Conversion-Tool.ps1
-   ```
-   
-   Or, to connect to a specific tenant:
-   ```powershell
-   .\Group-SOA-Conversion-Tool.ps1 -TenantId "00000000-0000-0000-0000-000000000000"
-   ```
-   
-   The `-TenantId` parameter is **optional**. If not specified, you'll connect to your default tenant. The tenant ID is displayed in the title bar once connected.
-
-2. **Connect to Microsoft Graph**:
-   - Click **"Connect to Graph"** button
-   - Sign in with your admin credentials
-   - The tool will automatically check and request consent for required permissions if needed
-   - The tool will automatically load all Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)
-   - Button changes to "Connected" with green color upon successful connection
-
-3. **Review Groups**:
-   - The grid shows: Display Name, Email, Group Type, Cloud Managed status (True/False), and Nesting Depth
-   - **Cloud Managed = False**: On-premises managed groups (candidates for conversion)
-   - **Cloud Managed = True**: Already converted to cloud-managed
-   - **Nesting Depth 0** = leaf group (no nested children in scope) — convert these first
-   - **Higher depth** = has nested children — convert after children are done
-   - Use "Previous" and "Next" buttons to navigate through pages
-   - **Optional**: Check "Hide Converted Groups" to show only on-premises managed groups
-
-4. **Convert Groups to Cloud Managed**:
-   - Select one or multiple groups from the list (multi-select supported)
-   - Click **"Convert to Cloud Managed"**
-   - The tool will:
-     - **Warn** if any selected parent group has unconverted nested children not in your selection
-     - **Sort** the selected groups bottom-up (lowest nesting depth first)
-     - Show the conversion order for your confirmation
-   - Confirm the conversion when prompted
-   - View batch conversion summary
-
-5. **Roll Back Groups to On-Prem**:
-   - Select one or multiple groups
-   - Click **"Roll Back to On-Prem"**
-   - The tool will sort groups top-down (highest nesting depth first) for rollback
-   - **Important**: Remove cloud users from groups and remove groups from access packages before rolling back
-   - Note: Rollback is only complete after the next Connect Sync cycle
-
-6. **Refresh Group List**:
-   - Click **"Refresh Groups"** to reload the group list and SOA status after conversions
-
-7. **Export the Group List**:
-   - Click **"Export List to CSV"** to write the group list to a CSV file in the script directory
-   - The export contains **all** groups currently in the list (every page), honouring the "Hide Converted Groups" filter and the active column sort
-   - You are prompted to open the file after the export completes
-
-8. **View Logs**:
-   - Click **"Open Log File"** to view the session log in Notepad
-
-9. **Disconnect**:
-   - Click **"Disconnect from Graph"** when finished
-   - Tool automatically disconnects when closing the window
-
-## Understanding Nested Groups
-
-The tool automatically detects nested group relationships. Here's how it works:
-
-- If **GroupB** is a member of **GroupA**, then GroupB is a "child" and GroupA is a "parent"
-- **GroupB** should be converted **before** GroupA
-- The **Nesting Depth** column shows how deep in the hierarchy a group sits:
-  - **Depth 0**: No nested children in scope (safe to convert first)
-  - **Depth 1**: Has direct nested children
-  - **Depth 2+**: Has nested children that themselves have nested children
-- When converting, the tool automatically processes groups from **depth 0 upward**
-- When rolling back, the tool automatically processes groups from **highest depth downward**
-
-### Example
-
-```
-GroupA (Depth 2)
-  └── GroupB (Depth 1)  ← member of GroupA
-        └── GroupC (Depth 0)  ← member of GroupB
+# Enterprise version
+cd .\v1.08
+.\Group-SOA-Conversion-Tool_1.08.ps1 [-TenantId "00000000-0000-0000-0000-000000000000"]
 ```
 
-**Conversion order**: GroupC → GroupB → GroupA
-**Rollback order**: GroupA → GroupB → GroupC
+See the folder README for the full usage, output files and Graph calls of each version.
 
-## Log Files
+## SOA Attribute States
 
-Log files are created in the same directory as the script with the naming format:
+After an SOA change, Microsoft Entra ID sets these attributes on the group ([source](https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-group-source-of-authority-configure#status-of-attributes-after-you-convert-soa)):
+
+| Step | isCloudManaged | onPremisesSyncEnabled |
+| --- | --- | --- |
+| Synced from AD DS | `false` | `true` |
+| SOA converted to the cloud | `true` | `null` |
+| Rolled back (until the sync client takes over) | `false` | `null` |
+| Cloud-native group | `false` | `null` |
+
+This is why v1.08 discovers groups with two queries: `onPremisesSyncEnabled eq true` for synced groups, and `onPremisesSyncBehavior/isCloudManaged eq true` for converted groups ([auditing and monitoring docs](https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-source-of-authority-auditing-monitoring)).
+
+## Repository Layout
+
 ```
-GroupSOAConversion_YYYYMMDD_HHMM.log
-```
-
-Logged operations include:
-- Microsoft Graph module installation attempts
-- Connection to Microsoft Graph
-- Permission checks and consent flows
-- Group retrieval and SOA status checks
-- Nested group analysis
-- Group conversions to cloud managed
-- Group rollbacks to on-premises managed
-- CSV exports of the group list
-- Any errors or warnings
-
-## CSV Exports
-
-Clicking **"Export List to CSV"** creates a file in the same directory as the script with the naming format:
-```
-GroupSOAExport_YYYYMMDD_HHMMSS.csv
+README.md      this overview
+LICENSE
+v1.03/         original version (script, logo, README)
+v1.04/         original version + module path fix (script, logo, README)
+v1.08/         enterprise version (script, logo, README)
 ```
 
-The file is UTF-8 encoded and contains the following columns:
+Logs, reports and CSV exports contain tenant data and are excluded by `.gitignore`.
 
-| Column | Description |
-| --- | --- |
-| `DisplayName` | Group display name |
-| `Mail` | Primary email address |
-| `GroupType` | Mail-Enabled Security Group or Distribution Group |
-| `IsCloudManaged` | `True`, `False` or `Unknown` |
-| `NestingDepth` | Computed nesting depth (0 = leaf group) |
-| `SecurityEnabled` | Whether the group is security enabled |
-| `MailEnabled` | Whether the group is mail enabled |
-| `ObjectId` | Entra ID object ID of the group |
+## Credits
 
-## Graph API Calls
+- Original tool and v1.0 - v1.04, v1.08: Hans Christian Andersen ([blog](http://www.hcandersen.net), [LinkedIn](https://www.linkedin.com/in/hanschrandersen/)).
+- v1.04 - v1.07 enterprise rework (batching, CSV waves, reports, cancel): contributed by a community contributor.
 
-The tool executes the following Microsoft Graph API calls:
+## License
 
-**Check SOA status**:
-```
-GET https://graph.microsoft.com/v1.0/groups/{ID}/onPremisesSyncBehavior?$select=isCloudManaged
-```
-
-**Convert to Cloud Managed**:
-```
-PATCH https://graph.microsoft.com/v1.0/groups/{ID}/onPremisesSyncBehavior
-{ "isCloudManaged": true }
-```
-
-**Roll Back to On-Premises Managed**:
-```
-PATCH https://graph.microsoft.com/v1.0/groups/{ID}/onPremisesSyncBehavior
-{ "isCloudManaged": false }
-```
-
-## How This Maps to the Microsoft Guidance
-
-### What the tool does
-1. Connects to Microsoft Graph with automatic permission consent flow
-2. Retrieves all groups and filters for Exchange-relevant groups (Mail-Enabled Security Groups and Distribution Groups)
-3. Checks the current `isCloudManaged` status for each group
-4. Displays groups with their SOA status (Cloud Managed: True/False)
-5. Optionally filters out already converted groups using the "Hide Converted Groups" checkbox
-6. Detects nested group relationships and computes conversion order
-7. Converts group SOA by calling the `onPremisesSyncBehavior` API
-
-### What happens after conversion to cloud-managed?
-Once a group is converted to cloud-managed (`isCloudManaged = true`):
-- The group can be managed in Microsoft Entra ID
-- On-premises changes to the group are **no longer synced** to the cloud
-- The `blockOnPremisesSync` property is set to `true` on the Entra ID object
-- Event ID 6956 appears in the Application log on the Connect Sync server, indicating the object isn't synced because its SOA is in the cloud
-
-### Limitations (from Microsoft documentation)
-- **No reconciliation**: Local AD DS changes to cloud-owned groups are overwritten when group provisioning runs
-- **No dual write**: After converting a group's SOA, membership references aren't synced for nested groups
-- **No SOA conversion of nested groups**: Only the specified group's SOA is converted; nested groups must be converted one-by-one (this tool handles this automatically)
-- **No extension attributes (1-15)**: Not supported on cloud security groups after SOA conversion
-
-## Troubleshooting
-
-- **Module Installation Fails**: Ensure you have internet connectivity and appropriate permissions. You can manually install the module using:
-  ```powershell
-  Install-Module -Name Microsoft.Graph.Groups -Scope CurrentUser
-  ```
-
-- **Permission Status Shows Red**: Click "Setup Graph Permissions" or manually grant consent in the Entra admin center (see "Setting Up Graph Permissions" section above)
-
-- **Connection Issues**: Verify your credentials have the necessary Microsoft Entra ID permissions
-
-- **Conversion Failures (403 errors)**: Ensure `Group-OnPremisesSyncBehavior.ReadWrite.All` is consented — reconnect to Graph to trigger the consent flow again
-
-- **Groups Not Showing**: The tool shows all mail-enabled groups (both on-premises synced and cloud-managed). Microsoft 365 groups and non-mail-enabled security groups are excluded by design. Use the "Hide Converted Groups" checkbox to filter out cloud-managed groups.
-
-## Notes / Limitations
-
-- The tool intentionally filters for Exchange-relevant groups only: Mail-Enabled Security Groups and Distribution Groups (both on-premises synced and cloud-managed).
-- Use the "Hide Converted Groups" checkbox to filter the view to show only on-premises managed groups.
-- Dynamic Distribution Groups are **not** supported for SOA conversion.
-- Microsoft 365 (Unified) groups are excluded.
-- Changes may take time to reflect depending on your environment and any directory sync / hybrid processes.
-- Groups are displayed in pages of 100 for better performance with large group counts.
-- The tool automatically disconnects from Microsoft Graph when the window is closed.
-- Optional: Place a `logo.png` file in the same directory as the script to display a custom logo in the header.
-
-## Reference
-
-- [Guidance for Group SOA](https://learn.microsoft.com/en-us/entra/identity/hybrid/concept-group-source-of-authority-guidance)
-- [Configure Group SOA](https://learn.microsoft.com/en-us/entra/identity/hybrid/how-to-group-source-of-authority-configure)
-- [Get onPremisesSyncBehavior API](https://learn.microsoft.com/en-us/graph/api/onpremisessyncbehavior-get)
-- [Update onPremisesSyncBehavior API](https://learn.microsoft.com/en-us/graph/api/onpremisessyncbehavior-update)
-
-## Changelog
-
-### Version 1.04
-**Bug Fixes:**
-- Fixed `'no valid module file was found'` error after auto-installing `Microsoft.Graph.Groups` when the CurrentUser module folder is not in `$env:PSModulePath` (e.g. Exchange servers with a user-level PSModulePath override, or redirected Documents folders). The script now adds the install location's module root to the session `PSModulePath` before importing.
-- The module is now verified as discoverable after installation; if it still cannot be found, the failure is reported with `PSModulePath` diagnostics instead of falsely reporting success.
-
-### Version 1.03
-**New Features:**
-- **CSV Export**: Added an "Export List to CSV" button that writes the current group list to a timestamped `GroupSOAExport_YYYYMMDD_HHMMSS.csv` file in the script directory. The export covers all pages and respects the "Hide Converted Groups" filter and the active column sort.
-
-### Version 1.02 (2026-05-08)
-**Improvements:**
-- **Scrollable Confirmation Dialog**: When converting or rolling back multiple groups (2+), a custom scrollable dialog now displays all groups with their nesting depth. This prevents dialog overflow issues when selecting 100+ groups, ensuring Yes/No buttons remain visible and accessible.
-- Enhanced user experience for large batch operations with better visibility of conversion order.
-
-### Version 1.01 (2026-03-04)
-**New Features:**
-- **Column Sorting**: Click any column header to sort all groups by that column (Display Name, Email, Group Type, Cloud Managed, Nesting Depth). Click again to toggle ascending/descending order. Sorting applies to the full dataset, not just the current page.
-- **Show/Hide Converted Groups**: Added checkbox to toggle visibility of already converted (cloud-managed) groups instead of permanently filtering them out.
-- **Simplified Connection**: Merged permission verification and consent flow into the "Connect to Graph" button for a streamlined workflow.
-- **Optional TenantId**: The `-TenantId` parameter is now optional. If not specified, the tool connects to your default tenant.
-
-**Improvements:**
-- Consolidated UI by removing the separate "Verify/Setup Graph Permissions" button.
-- Improved layout with better vertical spacing.
-- Enhanced user experience with single-click connection and automatic permission handling.
-
-### Version 1.0 (Initial Release)
-- Initial release with core functionality for Group SOA conversion.
-- Support for Mail-Enabled Security Groups and Distribution Groups.
-- Nested group detection and smart conversion ordering.
-- Batch conversion and rollback capabilities.
-- Pagination support for large group lists.
-- Automatic permission consent flow.
-
-## Version
-
-Current version: 1.04
+MIT License, see [LICENSE](LICENSE). This script is provided AS-IS, with no warranty - use at your own risk.
